@@ -32,6 +32,8 @@
 		/** @type {boolean} **/
 		_showLink: true,
 
+		_lookup: false,
+
 		/** @type {string} **/
 		tagName: 'div',
 
@@ -125,9 +127,10 @@
 			this.$el.find('.shareWithField').autocomplete("search");
 		},
 
-		_getSuggestions: function(searchTerm, perPage, model) {
+		_getSuggestions: function(searchTerm, perPage, model, lookup) {
 			if (this._lastSuggestions &&
 				this._lastSuggestions.searchTerm === searchTerm &&
+				this._lastSuggestions.lookup === lookup &&
 				this._lastSuggestions.perPage === perPage &&
 				this._lastSuggestions.model === model) {
 				return this._lastSuggestions.promise;
@@ -140,6 +143,7 @@
 				{
 					format: 'json',
 					search: searchTerm,
+					lookup: lookup,
 					perPage: perPage,
 					itemType: model.get('itemType')
 				},
@@ -297,6 +301,7 @@
 						var remotes = result.ocs.data.remotes;
 						var remoteGroups = result.ocs.data.remote_groups;
 						var lookup = result.ocs.data.lookup;
+						var lookupEnabled = result.ocs.data.lookupEnabled;
 						var emails = [];
 						if (typeof(result.ocs.data.emails) !== 'undefined') {
 							emails = result.ocs.data.emails;
@@ -363,7 +368,7 @@
 									)
 							);
 
-						deferred.resolve(result, exactMatches, moreResultsAvailable);
+						deferred.resolve(result, exactMatches, moreResultsAvailable, lookupEnabled);
 					} else {
 						deferred.reject(result.ocs.meta.message);
 					}
@@ -374,6 +379,7 @@
 
 			this._lastSuggestions = {
 				searchTerm: searchTerm,
+				lookup: lookup,
 				perPage: perPage,
 				model: model,
 				promise: deferred.promise()
@@ -421,8 +427,9 @@
 			this._getSuggestions(
 				search.term.trim(),
 				perPage,
-				view.model
-			).done(function(suggestions, exactMatches, moreResultsAvailable) {
+				view.model,
+				this._lookup
+			).done(function(suggestions, exactMatches, moreResultsAvailable, lookupAvailable) {
 				view._pendingOperationsCount--;
 				if (view._pendingOperationsCount === 0) {
 					$loading.addClass('hidden');
@@ -444,7 +451,12 @@
 					}
 
 				} else {
-					var title = t('core', 'No users or groups found for {search}', {search: $shareWithField.val()});
+					var title;
+					if (view._lookup) {
+						title = t('core', 'No (global) users found for {search}', {search: $shareWithField.val()});
+					} else {
+						title = t('core', 'No users or groups found for {search}', {search: $shareWithField.val()});
+					}
 					if (!view.configModel.get('allowGroupSharing')) {
 						title = t('core', 'No users found for {search}', {search: $('.shareWithField').val()});
 					}
@@ -452,12 +464,22 @@
 						.attr('data-original-title', title)
 						.tooltip('hide')
 						.tooltip({
-							placement: 'bottom',
+							placement: 'top',
 							trigger: 'manual'
 						})
 						.tooltip('fixTitle')
 						.tooltip('show');
-					response();
+					if (!view._lookup && lookupAvailable) {
+						// We have not searched globally yet but the lookup server is available
+						response([
+							{
+								label: t('core', 'Search globally'),
+								lookup: true
+							}
+						])
+					} else {
+						response();
+					}
 				}
 			}).fail(function(message) {
 				view._pendingOperationsCount--;
@@ -523,6 +545,9 @@
 				insert.addClass('merged');
 				text = item.value.shareWith;
 				description = type;
+			} else if (item.lookup) {
+				text = item.label;
+				icon = 'icon-search'
 			} else {
 				var avatar = $("<div class='avatardiv'></div>").appendTo(insert);
 				if (item.value.shareType === OC.Share.SHARE_TYPE_USER || item.value.shareType === OC.Share.SHARE_TYPE_CIRCLE) {
@@ -571,6 +596,15 @@
 					$(e.target).attr('disabled', false)
 						.autocomplete('search', $(e.target).val());
 				}, 0);
+				return false;
+			}
+
+			if (s.item.lookup) {
+				// Retrigger search but with global lookup this time
+				this._lookup = true;
+				var $shareWithField = this.$el.find('.shareWithField');
+				$shareWithField.autocomplete("search");
+				$shareWithField.focus();
 				return false;
 			}
 
@@ -652,12 +686,11 @@
 			};
 
 			var perPage = parseInt(oc_config['sharing.maxAutocompleteResults'], 10) || 200;
-			var onlyExactMatches = true;
 			this._getSuggestions(
 				$shareWithField.val(),
 				perPage,
 				this.model,
-				onlyExactMatches
+				this._lookup
 			).done(function(suggestions, exactMatches) {
 				if (suggestions.length === 0) {
 					restoreUI();
