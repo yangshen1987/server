@@ -428,7 +428,7 @@
 				search.term.trim(),
 				perPage,
 				view.model,
-				this._lookup
+				view._lookup
 			).done(function(suggestions, exactMatches, moreResultsAvailable, lookupAvailable) {
 				view._pendingOperationsCount--;
 				if (view._pendingOperationsCount === 0) {
