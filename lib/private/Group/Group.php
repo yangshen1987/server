@@ -30,55 +30,50 @@
 
 namespace OC\Group;
 
+use OC\Hooks\PublicEmitter;
 use OCP\GroupInterface;
 use OCP\IGroup;
 use OCP\IUser;
 use OCP\Group\Backend\ICountDisabledInGroup;
+use OCP\IUserManager;
+use Symfony\Component\EventDispatcher\EventDispatcherInterface;
+use Symfony\Component\EventDispatcher\GenericEvent;
 
 class Group implements IGroup {
 	/** @var null|string  */
 	protected $displayName;
 
-	/**
-	 * @var string $id
-	 */
+	/** @var string */
 	private $gid;
 
-	/**
-	 * @var \OC\User\User[] $users
-	 */
+	/** @var \OC\User\User[] */
 	private $users = array();
 
-	/**
-	 * @var bool $usersLoaded
-	 */
+	/** @var bool */
 	private $usersLoaded;
 
-	/**
-	 * @var \OC\Group\Backend[]|\OC\Group\Database[] $backend
-	 */
+	/** @var Backend[] */
 	private $backends;
-
-	/**
-	 * @var \OC\Hooks\PublicEmitter $emitter
-	 */
+	/** @var EventDispatcherInterface */
+	private $dispatcher;
+	/** @var \OC\User\Manager|IUserManager  */
+	private $userManager;
+	/** @var PublicEmitter */
 	private $emitter;
 
-	/**
-	 * @var \OC\User\Manager $userManager
-	 */
-	private $userManager;
 
 	/**
 	 * @param string $gid
-	 * @param \OC\Group\Backend[] $backends
-	 * @param \OC\User\Manager $userManager
-	 * @param \OC\Hooks\PublicEmitter $emitter
+	 * @param Backend[] $backends
+	 * @param EventDispatcherInterface $dispatcher
+	 * @param IUserManager $userManager
+	 * @param PublicEmitter $emitter
 	 * @param string $displayName
 	 */
-	public function __construct($gid, $backends, $userManager, $emitter = null, $displayName = null) {
+	public function __construct(string $gid, array $backends, EventDispatcherInterface $dispatcher, IUserManager $userManager, PublicEmitter $emitter = null, ?string $displayName = null) {
 		$this->gid = $gid;
 		$this->backends = $backends;
+		$this->dispatcher = $dispatcher;
 		$this->userManager = $userManager;
 		$this->emitter = $emitter;
 		$this->displayName = $displayName;
@@ -150,6 +145,10 @@ class Group implements IGroup {
 			return;
 		}
 
+		$this->dispatcher->dispatch(IGroup::class . '::preAddUser', new GenericEvent($this, [
+			'user' => $user,
+		]));
+
 		if ($this->emitter) {
 			$this->emitter->emit('\OC\Group', 'preAddUser', array($this, $user));
 		}
@@ -159,6 +158,11 @@ class Group implements IGroup {
 				if ($this->users) {
 					$this->users[$user->getUID()] = $user;
 				}
+
+				$this->dispatcher->dispatch(IGroup::class . '::postAddUser', new GenericEvent($this, [
+					'user' => $user,
+				]));
+
 				if ($this->emitter) {
 					$this->emitter->emit('\OC\Group', 'postAddUser', array($this, $user));
 				}
@@ -174,6 +178,9 @@ class Group implements IGroup {
 	 */
 	public function removeUser($user) {
 		$result = false;
+		$this->dispatcher->dispatch(IGroup::class . '::preRemoveUser', new GenericEvent($this, [
+			'user' => $user,
+		]));
 		if ($this->emitter) {
 			$this->emitter->emit('\OC\Group', 'preRemoveUser', array($this, $user));
 		}
@@ -184,6 +191,9 @@ class Group implements IGroup {
 			}
 		}
 		if ($result) {
+			$this->dispatcher->dispatch(IGroup::class . '::postRemoveUser', new GenericEvent($this, [
+				'user' => $user,
+			]));
 			if ($this->emitter) {
 				$this->emitter->emit('\OC\Group', 'postRemoveUser', array($this, $user));
 			}
@@ -291,6 +301,7 @@ class Group implements IGroup {
 		}
 
 		$result = false;
+		$this->dispatcher->dispatch(IGroup::class . '::preDelete', new GenericEvent($this));
 		if ($this->emitter) {
 			$this->emitter->emit('\OC\Group', 'preDelete', array($this));
 		}
@@ -300,8 +311,11 @@ class Group implements IGroup {
 				$backend->deleteGroup($this->gid);
 			}
 		}
-		if ($result and $this->emitter) {
-			$this->emitter->emit('\OC\Group', 'postDelete', array($this));
+		if ($result) {
+			$this->dispatcher->dispatch(IGroup::class . '::postDelete', new GenericEvent($this));
+			if ($this->emitter) {
+				$this->emitter->emit('\OC\Group', 'postDelete', array($this));
+			}
 		}
 		return $result;
 	}
